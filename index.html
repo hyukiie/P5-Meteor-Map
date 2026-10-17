@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Using data, step 3: change the initial view (UBC, North America)</title>
+  <link href="https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.11.13/lib/p5.min.js"></script>
+  <style>
+    body { margin: 0; }
+    #map { position: absolute; inset: 0; }
+    #map canvas.p5Canvas { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 1; }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<script>
+const ubcLat = 49.26;
+const ubcLng = -123.25;
+
+const myMap = new maplibregl.Map({
+  container: 'map',
+  center: [ubcLng, ubcLat],   // [longitude, latitude]: focused on UBC ...
+  zoom: 2.5,                  // ... at a zoom where most of North America is in view
+  style: 'https://tiles.openfreemap.org/styles/bright'
+});
+myMap.addControl(new maplibregl.NavigationControl());
+
+function latLngToPixel(lat, lng) { return myMap.project([lng, lat]); }
+function pixelToLatLng(x, y)     { const ll = myMap.unproject([x, y]); return { lat: ll.lat, lng: ll.lng }; }
+
+// Haversine formula to calculate distance in km between two lat/lng points
+function getDistanceFromLatLonInKm(lat1, lon1, lat2, lon2) {
+  const R = 6371; // Radius of the earth in km
+  const dLat = deg2rad(lat2 - lat1);
+  const dLon = deg2rad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c; // Distance in km
+}
+
+function deg2rad(deg) {
+  return deg * (Math.PI / 180);
+}
+
+// Helper function to draw a star symbol
+function drawStar(x, y, radius1, radius2, npoints) {
+  let angle = TWO_PI / npoints;
+  let halfAngle = angle / 2.0;
+  beginShape();
+  for (let a = -PI / 2; a < TWO_PI - PI / 2; a += angle) {
+    let sx = x + cos(a) * radius2;
+    let sy = y + sin(a) * radius2;
+    vertex(sx, sy);
+    sx = x + cos(a + halfAngle) * radius1;
+    sy = y + sin(a + halfAngle) * radius1;
+    vertex(sx, sy);
+  }
+  endShape(CLOSE);
+}
+
+let meteorites;
+
+function preload() {
+  meteorites = loadTable('Meteorite_Landings.csv', 'csv', 'header');
+}
+
+function setup() {
+  const canvas = createCanvas(windowWidth, windowHeight);
+  canvas.parent('map');
+  myMap.on('move', () => redraw());
+  noLoop();
+}
+
+function draw() {
+  clear();
+  const bounds = myMap.getBounds();
+
+  // UBC Label
+  const ubcPos = latLngToPixel(ubcLat, ubcLng);
+  noStroke();
+  fill(160, 82, 45);
+  textAlign(CENTER, CENTER);
+  textSize(16);
+  text("UBC", ubcPos.x, ubcPos.y - 10);
+  textSize(11);
+  text("(-123.25, 49.26)", ubcPos.x, ubcPos.y + 10);
+
+  // Draw meteorites
+  for (let i = 0; i < meteorites.getRowCount(); i++) {
+    const lat = meteorites.getNum(i, 'reclat');
+    const lng = meteorites.getNum(i, 'reclong');
+    if (bounds.contains([lng, lat])) {
+      const distToUbc = getDistanceFromLatLonInKm(ubcLat, ubcLng, lat, lng);
+      const pos = latLngToPixel(lat, lng);
+      
+      const mass = meteorites.getNum(i, 'mass (g)');
+      const m = sqrt(max(0, mass));
+      let size = map(m, sqrt(558), sqrt(60000000), 1, 25) + myMap.getZoom();
+
+      if (distToUbc <= 1000) {
+        // Blue stars for meteorites within 1000 km
+        fill(31, 133, 203);
+        stroke(100);
+        strokeWeight(1);
+        drawStar(pos.x, pos.y, size * 0.4, size * 0.9, 5);
+      } else {
+        // Orange rings (no fill) for meteorites further away
+        noFill();
+        stroke(255, 165, 0);
+        strokeWeight(1.2);
+        ellipse(pos.x, pos.y, size, size);
+      }
+    }
+  }
+  // Draw the legend on top of the map
+  drawLegend();
+}
+
+// The legend is drawn in screen coordinates (pixels from the corner), not map coordinates
+function drawLegend() {
+  const x = 20, y = height - 70;
+  noStroke();
+  fill(0, 0, 0, 170);
+  rect(x - 10, y - 30, 320, 90, 6);
+  fill(255);
+  textSize(13);
+  textAlign(LEFT, BASELINE);
+  text("Meteorites in NASA's catalogue (area follows mass)", x, y - 10);
+  
+  // Orange ring (> 1000 km)
+  noFill();
+  stroke(255, 165, 0);
+  strokeWeight(1.2);
+  ellipse(x + 8, y + 12, 12, 12);
+  noStroke(); 
+  fill(255);
+  text("More than 1000 km from UBC", x + 28, y + 16);
+  
+  // Blue star (<= 1000 km)
+  fill(31, 133, 203);
+  stroke(100);
+  strokeWeight(1);
+  drawStar(x + 8, y + 36, 5, 11, 5);
+  noStroke(); 
+  fill(255);
+  text("Within 1000 km of UBC", x + 28, y + 40);
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+  redraw();
+}
+</script>
+</body>
+</html>
